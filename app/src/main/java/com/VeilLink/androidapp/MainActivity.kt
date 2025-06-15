@@ -4,44 +4,92 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
+import androidx.activity.viewModels
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import com.VeilLink.androidapp.ui.theme.AndroidAppTheme
 
 class MainActivity : ComponentActivity() {
+    private val viewModel: MainViewModel by viewModels()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
             AndroidAppTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Greeting(
-                        name = "Android",
-                        modifier = Modifier.padding(innerPadding)
-                    )
-                }
+                MainScreen(viewModel)
             }
         }
     }
 }
 
 @Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-    Text(
-        text = "Hello $name!",
-        modifier = modifier
-    )
+fun MainScreen(viewModel: MainViewModel) {
+    if (!viewModel.loggedIn) {
+        LoginScreen(viewModel)
+    } else {
+        ServerScreen(viewModel)
+    }
+}
+
+@Composable
+fun LoginScreen(viewModel: MainViewModel) {
+    Column(Modifier.fillMaxSize().padding(16.dp)) {
+        OutlinedTextField(
+            value = viewModel.login,
+            onValueChange = { viewModel.login = it },
+            label = { Text("Login") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        OutlinedTextField(
+            value = viewModel.password,
+            onValueChange = { viewModel.password = it },
+            label = { Text("Password") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Button(onClick = { viewModel.performLogin() }) {
+            Text("Login")
+        }
+        viewModel.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    }
+}
+
+@Composable
+fun ServerScreen(viewModel: MainViewModel) {
+    Column(Modifier.fillMaxSize().padding(16.dp)) {
+        Text("Select server")
+        viewModel.servers.forEach { server ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                RadioButton(
+                    selected = viewModel.selectedServer == server,
+                    onClick = { viewModel.selectedServer = server }
+                )
+                Text(server)
+            }
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+        Button(onClick = { viewModel.loadConfig() }) {
+            Text("Get Config")
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        if (viewModel.config.isNotBlank()) {
+            Button(onClick = { viewModel.connect() }) {
+                Text("Connect")
+            }
+        }
+    }
 }
 
 @Preview(showBackground = true)
 @Composable
-fun GreetingPreview() {
+fun DefaultPreview() {
     AndroidAppTheme {
-        Greeting("Android")
+        MainScreen(MainViewModel())
     }
 }
