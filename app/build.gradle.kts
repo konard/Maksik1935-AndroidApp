@@ -18,7 +18,7 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         val serverName: String = project.properties["vpnServerName"] as? String
-            ?: """"
+            ?: ""
         buildConfigField("String", "VPN_SERVER_NAME", "\"$serverName\"")
     }
 
