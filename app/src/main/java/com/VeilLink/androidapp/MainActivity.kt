@@ -56,7 +56,12 @@ fun LoginScreen(viewModel: MainViewModel) {
         Button(onClick = { viewModel.performLogin() }) {
             Text("Login")
         }
-        viewModel.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        if (viewModel.error != null) {
+            Text(
+                viewModel.error!!,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
     }
 }
 
@@ -64,7 +69,7 @@ fun LoginScreen(viewModel: MainViewModel) {
 fun ServerScreen(viewModel: MainViewModel) {
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Text("Select server")
-        viewModel.servers.forEach { server ->
+        for (server in viewModel.servers) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 RadioButton(
                     selected = viewModel.selectedServer == server,
