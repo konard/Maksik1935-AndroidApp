@@ -18,8 +18,15 @@ dependencyResolutionManagement {
         mavenCentral()
         maven("https://jitpack.io")
     }
+    versionCatalogs {
+        create("libs") {
+            from(files("libs/amneziawg-android/gradle/libs.versions.toml"))
+        }
+    }
 }
 
 rootProject.name = "AndroidApp"
 include(":app")
+include(":tunnel")
+project(":tunnel").projectDir = file("libs/amneziawg-android/tunnel")
  

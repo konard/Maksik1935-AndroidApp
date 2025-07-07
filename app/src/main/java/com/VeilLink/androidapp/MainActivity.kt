@@ -5,23 +5,28 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
+
 import com.VeilLink.androidapp.ui.theme.AndroidAppTheme
 
 class MainActivity : ComponentActivity() {
+
     private val viewModel: MainViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
         setContent {
             AndroidAppTheme {
-                MainScreen(viewModel)
+                MainScreen(viewModel = viewModel)
             }
         }
     }
@@ -29,7 +34,7 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun MainScreen(viewModel: MainViewModel) {
-    if (!viewModel.loggedIn) {
+    if (viewModel.loggedIn.not()) {
         LoginScreen(viewModel)
     } else {
         ServerScreen(viewModel)
@@ -38,38 +43,52 @@ fun MainScreen(viewModel: MainViewModel) {
 
 @Composable
 fun LoginScreen(viewModel: MainViewModel) {
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+
         OutlinedTextField(
             value = viewModel.login,
             onValueChange = { viewModel.login = it },
             label = { Text("Login") },
             modifier = Modifier.fillMaxWidth()
         )
-        Spacer(modifier = Modifier.height(8.dp))
+
+        Spacer(Modifier.height(8.dp))
+
         OutlinedTextField(
             value = viewModel.password,
             onValueChange = { viewModel.password = it },
             label = { Text("Password") },
             modifier = Modifier.fillMaxWidth()
         )
-        Spacer(modifier = Modifier.height(16.dp))
-        Button(onClick = { viewModel.performLogin() }) {
+
+        Spacer(Modifier.height(16.dp))
+
+        Button(onClick = viewModel::performLogin) {
             Text("Login")
         }
-        if (viewModel.error != null) {
-            Text(
-                viewModel.error!!,
-                color = MaterialTheme.colorScheme.error
-            )
+
+        viewModel.error?.let { msg ->
+            Spacer(Modifier.height(8.dp))
+            Text(msg, color = MaterialTheme.colorScheme.error)
         }
     }
 }
 
 @Composable
 fun ServerScreen(viewModel: MainViewModel) {
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+
         Text("Select server")
-        for (server in viewModel.servers) {
+
+        viewModel.servers.forEach { server ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 RadioButton(
                     selected = viewModel.selectedServer == server,
@@ -78,23 +97,27 @@ fun ServerScreen(viewModel: MainViewModel) {
                 Text(server)
             }
         }
-        Spacer(modifier = Modifier.height(16.dp))
-        Button(onClick = { viewModel.loadConfig() }) {
+
+        Spacer(Modifier.height(16.dp))
+
+        Button(onClick = viewModel::loadConfig) {
             Text("Get Config")
         }
-        Spacer(modifier = Modifier.height(8.dp))
+
+        Spacer(Modifier.height(8.dp))
+
         if (viewModel.config.isNotBlank()) {
-            Button(onClick = { viewModel.connect() }) {
+            Button(onClick = viewModel::connect) {
                 Text("Connect")
             }
         }
     }
 }
 
-@Preview(showBackground = true)
+@Preview(showBackground = true, name = "Main preview")
 @Composable
 fun DefaultPreview() {
     AndroidAppTheme {
-        MainScreen(MainViewModel())
+        MainScreen(MainViewModel())   // в реальном проекте лучше передавать FakeViewModel
     }
 }
