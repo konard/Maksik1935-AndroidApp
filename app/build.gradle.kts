@@ -32,7 +32,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.4"   // под Kotlin 1.9
+        kotlinCompilerExtensionVersion = "1.5.5"   // под Kotlin 1.9
     }
     kotlinOptions {
         jvmTarget = "17"
