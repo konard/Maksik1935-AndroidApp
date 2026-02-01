@@ -85,9 +85,10 @@ object DefaultNetworkListener {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 cm.registerBestMatchingNetworkCallback(request, callback, handler!!)
             } else {
-                // API 29–30: requestNetwork даёт "best matching" под request
-                // (даже если default для приложения = VPN)
-                cm.requestNetwork(request, callback, handler!!)
+                // API 29–30: registerNetworkCallback — пассивный слушатель,
+                // не создаёт "запрос" на сеть (в отличие от requestNetwork),
+                // экономит батарею. VPN-сеть фильтруется в publish().
+                cm.registerNetworkCallback(request, callback, handler!!)
             }
         } catch (e: Exception) {
             Log.w(TAG, "register callback failed", e)
