@@ -23,7 +23,7 @@ import kotlinx.coroutines.flow.asStateFlow
  *
  * Поведение по API (minSdk = 29):
  *  - API 31+: registerBestMatchingNetworkCallback(request)
- *  - API 29–30: requestNetwork(request) (получаем "лучшую" сеть даже если default для приложения = VPN)
+ *  - API 29–30: registerNetworkCallback(request) (пассивный слушатель, экономит батарею)
  */
 object DefaultNetworkListener {
 

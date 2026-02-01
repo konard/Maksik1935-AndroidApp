@@ -143,6 +143,14 @@ class SingBoxService : VpnService() {
         super.onDestroy()
     }
 
+    override fun onRevoke() {
+        Log.w(javaClass.simpleName, "onRevoke(): VPN permission revoked by user/system")
+        scope.launch {
+            stopVpn()
+            stopSelf()
+        }
+    }
+
     private suspend fun startVpn(configJson: String) {
         try {
             Log.d(javaClass.simpleName, "startVpn(): entered, config length=${configJson.length}")
