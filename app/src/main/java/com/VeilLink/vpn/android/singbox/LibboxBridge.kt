@@ -73,4 +73,11 @@ class LibboxBridge : SingBoxBridge {
         runCatching { cc.urlTest(groupTag) }
             .onFailure { Log.w("LibboxBridge", "urlTest($groupTag) failed", it) }
     }
+
+    override fun selectOutbound(groupTag: String, outboundTag: String): Boolean {
+        val cc = commandClient ?: return false
+        return runCatching { cc.selectOutbound(groupTag, outboundTag) }
+            .onFailure { Log.w("LibboxBridge", "selectOutbound($groupTag, $outboundTag) failed", it) }
+            .isSuccess
+    }
 }

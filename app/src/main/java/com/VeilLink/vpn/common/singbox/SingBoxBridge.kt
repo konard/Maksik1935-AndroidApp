@@ -25,4 +25,10 @@ interface SingBoxBridge {
     fun resetNetwork(): Boolean = false
 
     fun urlTest(groupTag: String)
+
+    /**
+     * Переключить выбранный outbound в группе.
+     * @return true если переключение удалось
+     */
+    fun selectOutbound(groupTag: String, outboundTag: String): Boolean = false
 }
