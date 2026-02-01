@@ -39,4 +39,8 @@ class SingBoxCore(
     fun urlTest(groupTag: String) {
         bridge.urlTest(groupTag)
     }
+
+    fun selectOutbound(groupTag: String, outboundTag: String): Boolean {
+        return bridge.selectOutbound(groupTag, outboundTag)
+    }
 }

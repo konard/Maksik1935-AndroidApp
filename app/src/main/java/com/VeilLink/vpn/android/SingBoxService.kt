@@ -9,7 +9,6 @@ import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.VpnService
-import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -29,6 +28,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.concurrent.atomic.AtomicReference
 
 class SingBoxService : VpnService() {
@@ -43,6 +46,7 @@ class SingBoxService : VpnService() {
 
         private const val NOTIF_ID = 1
         private const val CHANNEL_ID = "vpn_service_channel"
+        private const val DESTROY_TIMEOUT_MS = 3_000L
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -81,6 +85,11 @@ class SingBoxService : VpnService() {
     private val URLTEST_GROUP_TAG = "auto"
     private val URLTEST_DEBOUNCE_MS = 800L
     private val URLTEST_MIN_INTERVAL_MS = 8_000L
+
+    // Probe: быстрая проверка текущего сервера через HTTP HEAD
+    private val PROBE_URL = "https://cp.cloudflare.com/generate_204"
+    private val PROBE_TIMEOUT_MS = 5_000L
+    private val PROBE_RECHECK_DELAY_MS = 2_000L
 
     private var prevUnderlay: DefaultNetworkListener.UnderlayState? = null
 
@@ -123,9 +132,23 @@ class SingBoxService : VpnService() {
     }
 
     override fun onDestroy() {
-        runBlocking { stopVpn() }
+        // Ограничиваем блокировку по времени, чтобы не вызвать ANR (5 секунд — порог ANR).
+        // Если stopVpn() не успевает — scope.cancel() гарантированно прибьёт все корутины.
+        runCatching {
+            runBlocking {
+                withTimeoutOrNull(DESTROY_TIMEOUT_MS) { stopVpn() }
+            }
+        }
         scope.cancel()
         super.onDestroy()
+    }
+
+    override fun onRevoke() {
+        Log.w(javaClass.simpleName, "onRevoke(): VPN permission revoked by user/system")
+        scope.launch {
+            stopVpn()
+            stopSelf()
+        }
     }
 
     private suspend fun startVpn(configJson: String) {
@@ -248,7 +271,6 @@ class SingBoxService : VpnService() {
     }
 
     private fun applyUnderlyingNetwork(net: Network?) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) return
         if (_state.value !is ConnectionState.Up) return
 
         if (underlyingApplied == net) return
@@ -331,6 +353,35 @@ class SingBoxService : VpnService() {
     }
 
 
+    /**
+     * Быстрая проверка текущего сервера через HTTP HEAD запрос.
+     * Проходит через VPN-туннель, поэтому проверяет именно текущий outbound.
+     */
+    private suspend fun probeCurrentServer(): Boolean = withContext(Dispatchers.IO) {
+        withTimeoutOrNull(PROBE_TIMEOUT_MS) {
+            runCatching {
+                val conn = URL(PROBE_URL).openConnection() as HttpURLConnection
+                conn.requestMethod = "HEAD"
+                conn.connectTimeout = PROBE_TIMEOUT_MS.toInt()
+                conn.readTimeout = PROBE_TIMEOUT_MS.toInt()
+                conn.instanceFollowRedirects = false
+                try {
+                    conn.responseCode in 200..399
+                } finally {
+                    conn.disconnect()
+                }
+            }.getOrDefault(false)
+        } ?: false
+    }
+
+    /**
+     * Умный URL-тест с двухфазной проверкой:
+     * 1) Проверяем текущий сервер (быстрый HTTP-probe)
+     * 2) Если жив — остаёмся, не трогаем остальные
+     * 3) Если мёртв — urlTest по всей группе (ищем живой)
+     * 4) Повторно проверяем текущий (вдруг интернет пропадал, а не сервер)
+     * 5) Если текущий ожил — остаёмся, иначе — переключаемся на найденный живой
+     */
     private fun scheduleUrlTest(reason: String, expectedNetwork: Network) {
         urlTestJob?.cancel()
         urlTestJob = scope.launch {
@@ -339,18 +390,44 @@ class SingBoxService : VpnService() {
             if (_state.value !is ConnectionState.Up) return@launch
             if (currentNetworkRef.get() != expectedNetwork) return@launch
 
-            // актуальное состояние берём из prevUnderlay (оно обновляется коллектором)
             val cur = prevUnderlay ?: return@launch
             if (!cur.eligible || !cur.validated) return@launch
 
             val now = SystemClock.elapsedRealtime()
             if (now - lastUrlTestAtMs < URLTEST_MIN_INTERVAL_MS) return@launch
 
-            Log.d(javaClass.simpleName, "URLTest ($reason), group=$URLTEST_GROUP_TAG")
+            Log.d(javaClass.simpleName, "URLTest phase 1: probe current server ($reason)")
             lastUrlTestAtMs = now
 
+            // Фаза 1: проверяем текущий сервер
+            val currentAlive = probeCurrentServer()
+
+            if (currentAlive) {
+                Log.d(javaClass.simpleName, "URLTest: current server alive, skipping full test")
+                updateNotif("Соединение защищено")
+                return@launch
+            }
+
+            Log.d(javaClass.simpleName, "URLTest phase 2: current server down, testing all ($reason)")
+            updateNotif("Сервер не отвечает, ищу альтернативу…")
+
+            // Фаза 2: текущий не ответил — тестируем все серверы в группе
             runCatching { core?.urlTest(URLTEST_GROUP_TAG) }
                 .onFailure { Log.w(javaClass.simpleName, "urlTest failed", it) }
+
+            // Фаза 3: повторно проверяем текущий (вдруг интернет пропадал, а не сервер)
+            delay(PROBE_RECHECK_DELAY_MS)
+
+            if (_state.value !is ConnectionState.Up) return@launch
+
+            val currentAliveRetry = probeCurrentServer()
+            if (currentAliveRetry) {
+                Log.d(javaClass.simpleName, "URLTest phase 3: current server recovered, staying")
+                updateNotif("Соединение защищено")
+            } else {
+                Log.d(javaClass.simpleName, "URLTest phase 3: current server still down, auto-group selected best")
+                updateNotif("Переключено на доступный сервер")
+            }
         }
     }
 
@@ -365,22 +442,15 @@ class SingBoxService : VpnService() {
     }
 
     private fun stopForegroundCompat() {
-        if (Build.VERSION.SDK_INT >= 24) {
-            stopForeground(STOP_FOREGROUND_DETACH)
-        } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
-        }
+        stopForeground(STOP_FOREGROUND_DETACH)
     }
 
     private fun buildNotification(text: String): Notification {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val nm = getSystemService(NotificationManager::class.java)
-            if (nm.getNotificationChannel(CHANNEL_ID) == null) {
-                nm.createNotificationChannel(
-                    NotificationChannel(CHANNEL_ID, "VPN", NotificationManager.IMPORTANCE_LOW)
-                )
-            }
+        val nm = getSystemService(NotificationManager::class.java)
+        if (nm.getNotificationChannel(CHANNEL_ID) == null) {
+            nm.createNotificationChannel(
+                NotificationChannel(CHANNEL_ID, "VPN", NotificationManager.IMPORTANCE_LOW)
+            )
         }
         val pi = PendingIntent.getActivity(
             this,
