@@ -182,6 +182,13 @@ class AndroidConfigProvider : ConfigProvider {
   ],
   "outbounds": [
     {
+      "type": "urltest",
+      "tag": "auto",
+      "outbounds": ["proxy"],
+      "url": "https://cp.cloudflare.com/generate_204",
+      "interval": "5m"
+    },
+    {
       "domain_strategy": "prefer_ipv4",
       "type": "vless",
       "tag": "proxy",
@@ -233,7 +240,7 @@ class AndroidConfigProvider : ConfigProvider {
 },
   "route": {
     "auto_detect_interface": false,
-    "final": "proxy",
+    "final": "auto",
     "rules": [
       {
         "port": [53],

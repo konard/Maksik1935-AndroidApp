@@ -36,11 +36,15 @@ class SingBoxCore(
         return bridge.resetNetwork()
     }
 
+    @Synchronized
     fun urlTest(groupTag: String) {
+        if (!started) return
         bridge.urlTest(groupTag)
     }
 
+    @Synchronized
     fun selectOutbound(groupTag: String, outboundTag: String): Boolean {
+        if (!started) return false
         return bridge.selectOutbound(groupTag, outboundTag)
     }
 }

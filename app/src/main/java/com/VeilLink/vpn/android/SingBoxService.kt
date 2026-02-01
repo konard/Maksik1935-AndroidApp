@@ -49,7 +49,7 @@ class SingBoxService : VpnService() {
         private const val DESTROY_TIMEOUT_MS = 3_000L
     }
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var core: SingBoxCore? = null
     private var platform: AndroidPlatformInterface? = null
@@ -59,6 +59,10 @@ class SingBoxService : VpnService() {
 
     // Текущая выбранная underlay-сеть (потокобезопасно — ядро может читать не из dispatcher'а)
     private val currentNetworkRef = AtomicReference<Network?>(null)
+
+    // Защищает доступ к разделяемому мутабельному состоянию (underlyingApplied, pendingUnderlying,
+    // prevUnderlay, lastResetAtMs, lastUrlTestAtMs и т.п.) между handleUnderlayState и stopVpn.
+    private val stateLock = Any()
 
     // Мы обновляем setUnderlyingNetworks только когда Network реально поменялся (или сбрасываем на null)
     private var underlyingApplied: Network? = null
@@ -86,15 +90,22 @@ class SingBoxService : VpnService() {
     private val URLTEST_DEBOUNCE_MS = 800L
     private val URLTEST_MIN_INTERVAL_MS = 8_000L
 
-    // Probe: быстрая проверка текущего сервера через HTTP HEAD
+    // Probe: быстрая проверка текущего сервера через HTTP HEAD.
+    // Таймауты сокета (connect + read) ограничивают реальное ожидание I/O.
+    // Корутинный таймаут — внешний предохранитель на случай зависания.
     private val PROBE_URL = "https://cp.cloudflare.com/generate_204"
-    private val PROBE_TIMEOUT_MS = 5_000L
+    private val PROBE_CONNECT_TIMEOUT_MS = 4_000
+    private val PROBE_READ_TIMEOUT_MS = 3_000
+    private val PROBE_COROUTINE_TIMEOUT_MS = 8_000L
     private val PROBE_RECHECK_DELAY_MS = 2_000L
 
     private var prevUnderlay: DefaultNetworkListener.UnderlayState? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(javaClass.simpleName, "onStartCommand action=${intent?.action}, startId=$startId")
+
+        // Гарантируем живой scope (мог быть отменён в onDestroy при предыдущем жизненном цикле)
+        ensureActiveScope()
 
         return when (intent?.action) {
             ACTION_CONNECT -> {
@@ -114,6 +125,8 @@ class SingBoxService : VpnService() {
             }
 
             ACTION_DISCONNECT -> {
+                // startForeground нужен, т.к. сервис может стартовать через startForegroundService.
+                // Если VPN не поднят — просто показываем уведомление и сразу убираем.
                 startForegroundCompat(buildNotification("Disconnecting…"))
                 Log.d(javaClass.simpleName, "ACTION_DISCONNECT")
                 scope.launch {
@@ -131,6 +144,13 @@ class SingBoxService : VpnService() {
         }
     }
 
+    /** Пересоздаёт scope, если он был отменён (например, после onDestroy). */
+    private fun ensureActiveScope() {
+        if (!scope.coroutineContext[Job]!!.isActive) {
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        }
+    }
+
     override fun onDestroy() {
         // Ограничиваем блокировку по времени, чтобы не вызвать ANR (5 секунд — порог ANR).
         // Если stopVpn() не успевает — scope.cancel() гарантированно прибьёт все корутины.
@@ -145,8 +165,20 @@ class SingBoxService : VpnService() {
 
     override fun onRevoke() {
         Log.w(javaClass.simpleName, "onRevoke(): VPN permission revoked by user/system")
-        scope.launch {
-            stopVpn()
+        // onRevoke может вызваться когда scope уже отменён (после onDestroy),
+        // поэтому используем отдельный runBlocking с таймаутом для гарантированной очистки.
+        try {
+            scope.launch {
+                stopVpn()
+                stopSelf()
+            }
+        } catch (_: Exception) {
+            // scope уже отменён — выполняем очистку синхронно
+            runCatching {
+                runBlocking {
+                    withTimeoutOrNull(DESTROY_TIMEOUT_MS) { stopVpn() }
+                }
+            }
             stopSelf()
         }
     }
@@ -189,8 +221,10 @@ class SingBoxService : VpnService() {
 
             _state.value = ConnectionState.Up
             // Теперь VPN реально поднят — можно безопасно применить pending underlay
-            applyUnderlyingNetwork(pendingUnderlying ?: currentNetworkRef.get())
-            pendingUnderlying = null
+            synchronized(stateLock) {
+                applyUnderlyingNetwork(pendingUnderlying ?: currentNetworkRef.get())
+                pendingUnderlying = null
+            }
             updateNotif("Соединение защищено")
             Log.d(javaClass.simpleName, "VPN state set to Up")
         } catch (t: Throwable) {
@@ -206,22 +240,22 @@ class SingBoxService : VpnService() {
 
         networkCollectJob?.cancel()
         networkCollectJob = null
-        prevUnderlay = null
 
         runCatching { DefaultNetworkListener.stop() }
 
-        currentNetworkRef.set(null)
-        underlyingApplied = null
-
-        lastResetAtMs = 0
-
-        urlTestJob?.cancel()
-        urlTestJob = null
-        lastUrlTestAtMs = 0
-        underlyingRetryJob?.cancel()
-        underlyingRetryJob = null
-        underlyingRetryFor = null
-        pendingUnderlying = null
+        synchronized(stateLock) {
+            prevUnderlay = null
+            currentNetworkRef.set(null)
+            underlyingApplied = null
+            lastResetAtMs = 0
+            urlTestJob?.cancel()
+            urlTestJob = null
+            lastUrlTestAtMs = 0
+            underlyingRetryJob?.cancel()
+            underlyingRetryJob = null
+            underlyingRetryFor = null
+            pendingUnderlying = null
+        }
 
         try {
             core?.stop()
@@ -237,7 +271,7 @@ class SingBoxService : VpnService() {
         }
     }
 
-    private fun handleUnderlayState(cur: DefaultNetworkListener.UnderlayState) {
+    private fun handleUnderlayState(cur: DefaultNetworkListener.UnderlayState) = synchronized(stateLock) {
         val prev = prevUnderlay
         prevUnderlay = cur
 
@@ -356,14 +390,17 @@ class SingBoxService : VpnService() {
     /**
      * Быстрая проверка текущего сервера через HTTP HEAD запрос.
      * Проходит через VPN-туннель, поэтому проверяет именно текущий outbound.
+     *
+     * Таймауты: connect (4s) + read (3s) = максимум ~7s на сокетах,
+     * корутинный таймаут (8s) — внешний предохранитель.
      */
     private suspend fun probeCurrentServer(): Boolean = withContext(Dispatchers.IO) {
-        withTimeoutOrNull(PROBE_TIMEOUT_MS) {
+        withTimeoutOrNull(PROBE_COROUTINE_TIMEOUT_MS) {
             runCatching {
                 val conn = URL(PROBE_URL).openConnection() as HttpURLConnection
                 conn.requestMethod = "HEAD"
-                conn.connectTimeout = PROBE_TIMEOUT_MS.toInt()
-                conn.readTimeout = PROBE_TIMEOUT_MS.toInt()
+                conn.connectTimeout = PROBE_CONNECT_TIMEOUT_MS
+                conn.readTimeout = PROBE_READ_TIMEOUT_MS
                 conn.instanceFollowRedirects = false
                 try {
                     conn.responseCode in 200..399
@@ -442,7 +479,7 @@ class SingBoxService : VpnService() {
     }
 
     private fun stopForegroundCompat() {
-        stopForeground(STOP_FOREGROUND_DETACH)
+        stopForeground(STOP_FOREGROUND_REMOVE)
     }
 
     private fun buildNotification(text: String): Notification {
