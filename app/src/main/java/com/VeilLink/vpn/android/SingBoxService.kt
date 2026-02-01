@@ -27,6 +27,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.net.HttpURLConnection
@@ -45,6 +46,7 @@ class SingBoxService : VpnService() {
 
         private const val NOTIF_ID = 1
         private const val CHANNEL_ID = "vpn_service_channel"
+        private const val DESTROY_TIMEOUT_MS = 3_000L
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -130,7 +132,13 @@ class SingBoxService : VpnService() {
     }
 
     override fun onDestroy() {
-        runBlocking { stopVpn() }
+        // Ограничиваем блокировку по времени, чтобы не вызвать ANR (5 секунд — порог ANR).
+        // Если stopVpn() не успевает — scope.cancel() гарантированно прибьёт все корутины.
+        runCatching {
+            runBlocking {
+                withTimeoutOrNull(DESTROY_TIMEOUT_MS) { stopVpn() }
+            }
+        }
         scope.cancel()
         super.onDestroy()
     }
