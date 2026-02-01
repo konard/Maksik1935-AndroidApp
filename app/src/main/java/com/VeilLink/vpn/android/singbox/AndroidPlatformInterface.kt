@@ -2,7 +2,6 @@ package com.veillink.vpn.android.singbox
 
 import android.net.Network
 import android.net.VpnService
-import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import io.nekohasekai.libbox.*
@@ -75,9 +74,7 @@ class AndroidPlatformInterface(
         builder.addDnsServer("172.19.0.2")
 
         // Важно: указываем underlying network, чтобы Android не пытался отправлять трафик VPN в сам VPN.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
-            underlyingNetwork()?.let { builder.setUnderlyingNetworks(arrayOf(it)) }
-        }
+        underlyingNetwork()?.let { builder.setUnderlyingNetworks(arrayOf(it)) }
 
         val pfd = builder.establish() ?: error("VpnService.Builder.establish() returned null")
         tunPfd = pfd

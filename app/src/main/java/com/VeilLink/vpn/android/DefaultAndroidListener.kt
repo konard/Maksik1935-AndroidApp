@@ -21,11 +21,9 @@ import kotlinx.coroutines.flow.asStateFlow
  *
  * Выбор сети отдаём системе (best matching), без перебора allNetworks/скоринга.
  *
- * Поведение по API:
+ * Поведение по API (minSdk = 29):
  *  - API 31+: registerBestMatchingNetworkCallback(request)
- *  - API 28–30: requestNetwork(request) (получаем “лучшую” сеть даже если default для приложения = VPN)
- *  - API 24–27: registerDefaultNetworkCallback()
- *  - ниже: registerNetworkCallback(request)
+ *  - API 29–30: requestNetwork(request) (получаем "лучшую" сеть даже если default для приложения = VPN)
  */
 object DefaultNetworkListener {
 
@@ -84,21 +82,12 @@ object DefaultNetworkListener {
         started = true
 
         try {
-            when {
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-                    cm.registerBestMatchingNetworkCallback(request, callback, handler!!)
-                }
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.P -> {
-                    // На P+ default network для приложения может быть VPN.
-                    // requestNetwork даёт “best matching” под request (аналог подхода NekoBox).
-                    cm.requestNetwork(request, callback, handler!!)
-                }
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.N -> {
-                    cm.registerDefaultNetworkCallback(callback, handler!!)
-                }
-                else -> {
-                    cm.registerNetworkCallback(request, callback, handler!!)
-                }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                cm.registerBestMatchingNetworkCallback(request, callback, handler!!)
+            } else {
+                // API 29–30: requestNetwork даёт "best matching" под request
+                // (даже если default для приложения = VPN)
+                cm.requestNetwork(request, callback, handler!!)
             }
         } catch (e: Exception) {
             Log.w(TAG, "register callback failed", e)
@@ -220,9 +209,7 @@ object DefaultNetworkListener {
         if (hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return false
         if (!hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) return false
         if (hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL)) return false
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
-            !hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED)
-        ) return false
+        if (!hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED)) return false
         return true
     }
 
