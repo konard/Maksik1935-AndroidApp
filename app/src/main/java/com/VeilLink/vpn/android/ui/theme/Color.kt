@@ -1,4 +1,4 @@
-package com.VeilLink.androidapp.ui.theme
+package com.veillink.vpn.android.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

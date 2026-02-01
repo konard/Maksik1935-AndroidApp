@@ -1,6 +1,5 @@
-package com.VeilLink.androidapp.ui.theme
+package com.veillink.vpn.android.ui.theme
 
-import android.app.Activity
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
